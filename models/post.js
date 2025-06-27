@@ -1,20 +1,24 @@
 const mongoose = require('mongoose');
-const PostSchema = new mongoose.Schema({
-  SOL_ID: String,
-  DEV_ID: String,
-  userId: String,
-  username: String,
-  postId: { type: String, unique: true, index: true },
-  content: String,
-  project: [String],
-  score: Number,
-  blabz: Number,
-  likes: Number,
-  retweets: Number,
-  replies: Number,
-  hashtags: [String],
-  tweetUrl: String,
-  createdAt: Date,
-  tweetType: String
+const Schema = mongoose.Schema;
+
+const postSchema = new Schema({
+  SOL_ID: { type: String, required: false },
+  DEV_ID: { type: String, required: false },
+  userId: { type: String, required: true },
+  username: { type: String, required: true },
+  postId: { type: String, required: true, unique: true },
+  content: { type: String, required: true },
+  project: { type: [String], required: true },
+  score: { type: Number, required: true },
+  blabz: { type: Number, required: true },
+  likes: { type: Number, default: 0 },
+  retweets: { type: Number, default: 0 },
+  replies: { type: Number, default: 0 },
+  hashtags: { type: [String], default: [] },
+  tweetUrl: { type: String, required: true },
+  createdAt: { type: Date, required: true },
+  tweetType: { type: String, required: true },
+  updatedAt: { type: Date, default: Date.now }
 });
-module.exports = mongoose.model('Post', PostSchema);
+
+module.exports = mongoose.model('Post', postSchema);
