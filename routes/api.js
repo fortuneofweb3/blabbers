@@ -1,16 +1,17 @@
 const express = require('express');
 const cors = require('cors');
-const router = express.Router();
-const { TwitterApi } = require('twitter-api-v2');
+const axios = require('axios');
 const Post = require('../models/post');
 const ProcessedPost = require('../models/processedpost');
 const Project = require('../models/project');
 const User = require('../models/user');
 
+const router = express.Router();
+
 if (!process.env.X_BEARER_TOKEN) {
   throw new Error('[API] X_BEARER_TOKEN is not set');
 }
-const client = new TwitterApi(process.env.X_BEARER_TOKEN);
+console.log('[API] Twitter API Bearer Token configured');
 
 router.use(cors());
 
@@ -76,23 +77,31 @@ router.post('/users', async (req, res) => {
     }
 
     console.log(`[API] Fetching Twitter user: ${username}`);
-    const twitterUser = await client.v2.userByUsername(username, {
-      'user.fields': ['id', 'name', 'username', 'profile_image_url', 'public_metrics']
+    console.log('[API] Attempting Twitter API call for POST /users');
+    const response = await axios.get(`https://api.twitter.com/2/users/by/username/${username}`, {
+      headers: {
+        Authorization: `Bearer ${process.env.X_BEARER_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      params: {
+        'user.fields': 'id,name,username,profile_image_url,public_metrics'
+      }
     });
-    console.log('[API] Twitter API response:', twitterUser.data);
-    if (!twitterUser.data) {
+    console.log('[API] Twitter API response:', response.data);
+    const twitterUser = response.data.data;
+    if (!twitterUser) {
       return res.status(404).json({ error: 'Twitter user not found' });
     }
 
     const userData = {
       SOL_ID,
       DEV_ID,
-      userId: twitterUser.data.id,
-      username: twitterUser.data.username,
-      name: twitterUser.data.name || '',
-      profile_image_url: twitterUser.data.profile_image_url || '',
-      followers_count: twitterUser.data.public_metrics?.followers_count || 0,
-      following_count: twitterUser.data.public_metrics?.following_count || 0,
+      userId: twitterUser.id,
+      username: twitterUser.username,
+      name: twitterUser.name || '',
+      profile_image_url: twitterUser.profile_image_url || '',
+      followers_count: twitterUser.public_metrics?.followers_count || 0,
+      following_count: twitterUser.public_metrics?.following_count || 0,
       updatedAt: new Date()
     };
 
@@ -104,14 +113,14 @@ router.post('/users', async (req, res) => {
     console.log(`[MongoDB] User ${username} saved:`, user);
     res.json({ message: `User ${username} saved`, user });
   } catch (err) {
-    console.error('[API] POST /users error:', err.message, err.stack);
-    if (err.code === 429) {
+    console.error('[API] POST /users error:', err.response?.status, err.message, err.stack);
+    if (err.response?.status === 429) {
       return res.status(429).json({ 
         error: 'Twitter API rate limit exceeded', 
         details: 'Please try again after 15 minutes' 
       });
     }
-    res.status(500).json({ error: 'Server error', details: err.message });
+    res.status(err.response?.status || 500).json({ error: 'Server error', details: err.message });
   }
 });
 
@@ -119,8 +128,72 @@ router.get('/user-details/:username', async (req, res) => {
   try {
     console.log(`[API] Fetching user: ${req.params.username}`);
     const cachedUser = await User.findOne({ username: req.params.username }).lean();
-    if (cachedUser && cachedUser.updatedAt > new Date(Date.now() - 15 * 60 * 1000)) {
-      console.log('[API] Using cached user data:', cachedUser);
+    if (cachedUser) {
+      console.log('[API] Found cached user data:', cachedUser);
+      if (cachedUser.updatedAt > new Date(Date.now() - 15 * 60 * 1000)) {
+        console.log('[API] Using fresh cached user data');
+        return res.json({
+          SOL_ID: cachedUser.SOL_ID || '',
+          DEV_ID: cachedUser.DEV_ID || '',
+          userId: cachedUser.userId,
+          username: cachedUser.username,
+          name: cachedUser.name,
+          profile_image_url: cachedUser.profile_image_url,
+          followers_count: cachedUser.followers_count,
+          following_count: cachedUser.following_count
+        });
+      }
+      console.log('[API] Cached user data stale, attempting Twitter API');
+    } else {
+      console.log('[API] No cached user data found');
+    }
+
+    console.log('[API] Attempting Twitter API call for GET /user-details');
+    const response = await axios.get(`https://api.twitter.com/2/users/by/username/${req.params.username}`, {
+      headers: {
+        Authorization: `Bearer ${process.env.X_BEARER_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      params: {
+        'user.fields': 'id,name,username,profile_image_url,public_metrics'
+      }
+    });
+    console.log('[API] Twitter API response:', response.data);
+    const twitterUser = response.data.data;
+    if (!twitterUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const userData = {
+      userId: twitterUser.id,
+      username: twitterUser.username,
+      name: twitterUser.name || '',
+      profile_image_url: twitterUser.profile_image_url || '',
+      followers_count: twitterUser.public_metrics?.followers_count || 0,
+      following_count: twitterUser.public_metrics?.following_count || 0,
+      updatedAt: new Date()
+    };
+    const userDoc = await User.findOneAndUpdate(
+      { userId: twitterUser.id },
+      { $set: userData },
+      { upsert: true, new: true }
+    ).lean();
+    console.log('[API] MongoDB userDoc updated:', userDoc);
+
+    res.json({
+      SOL_ID: userDoc.SOL_ID || '',
+      DEV_ID: userDoc.DEV_ID || '',
+      userId: twitterUser.id,
+      username: twitterUser.username,
+      name: twitterUser.name,
+      profile_image_url: twitterUser.profile_image_url,
+      followers_count: twitterUser.public_metrics.followers_count,
+      following_count: twitterUser.public_metrics.following_count
+    });
+  } catch (err) {
+    console.error('[API] GET /user-details error:', err.response?.status, err.message, err.stack);
+    if (err.response?.status === 429 && cachedUser) {
+      console.log('[API] Rate limit hit, falling back to stale cached user data');
       return res.json({
         SOL_ID: cachedUser.SOL_ID || '',
         DEV_ID: cachedUser.DEV_ID || '',
@@ -129,53 +202,49 @@ router.get('/user-details/:username', async (req, res) => {
         name: cachedUser.name,
         profile_image_url: cachedUser.profile_image_url,
         followers_count: cachedUser.followers_count,
-        following_count: cachedUser.following_count
+        following_count: cachedUser.following_count,
+        warning: 'Using stale cached data due to Twitter API rate limit'
       });
     }
-
-    const twitterUser = await client.v2.userByUsername(req.params.username, {
-      'user.fields': ['id', 'name', 'username', 'profile_image_url', 'public_metrics']
-    });
-    console.log('[API] Twitter API response:', twitterUser.data);
-    if (!twitterUser.data) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const userData = {
-      userId: twitterUser.data.id,
-      username: twitterUser.data.username,
-      name: twitterUser.data.name || '',
-      profile_image_url: twitterUser.data.profile_image_url || '',
-      followers_count: twitterUser.data.public_metrics?.followers_count || 0,
-      following_count: twitterUser.data.public_metrics?.following_count || 0,
-      updatedAt: new Date()
-    };
-    const userDoc = await User.findOneAndUpdate(
-      { userId: twitterUser.data.id },
-      { $set: userData },
-      { upsert: true, new: true }
-    ).lean();
-    console.log('[API] MongoDB userDoc:', userDoc);
-
-    res.json({
-      SOL_ID: userDoc.SOL_ID || '',
-      DEV_ID: userDoc.DEV_ID || '',
-      userId: twitterUser.data.id,
-      username: twitterUser.data.username,
-      name: twitterUser.data.name,
-      profile_image_url: twitterUser.data.profile_image_url,
-      followers_count: twitterUser.data.public_metrics.followers_count,
-      following_count: twitterUser.data.public_metrics.following_count
-    });
-  } catch (err) {
-    console.error('[API] GET /user-details error:', err.message, err.stack);
-    if (err.code === 429) {
+    if (err.response?.status === 429) {
       return res.status(429).json({ 
         error: 'Twitter API rate limit exceeded', 
         details: 'Please try again after 15 minutes' 
       });
     }
-    res.status(500).json({ error: 'Server error', details: err.message });
+    res.status(err.response?.status || 500).json({ error: 'Server error', details: err.message });
+  }
+});
+
+router.get('/rate-limit-status', async (req, res) => {
+  try {
+    console.log('[API] Checking Twitter API rate limit status');
+    console.log('[API] Attempting Twitter API call for rate-limit-status');
+    const response = await axios.get('https://api.twitter.com/2/users/by', {
+      headers: {
+        Authorization: `Bearer ${process.env.X_BEARER_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      params: {
+        usernames: 'test',
+        'user.fields': 'id'
+      }
+    });
+    console.log('[API] Rate limit check response:', response.headers);
+    res.json({ 
+      message: 'Rate limit check', 
+      rateLimit: {
+        limit: response.headers['x-rate-limit-limit'],
+        remaining: response.headers['x-rate-limit-remaining'],
+        reset: new Date(parseInt(response.headers['x-rate-limit-reset']) * 1000)
+      }
+    });
+  } catch (err) {
+    console.error('[API] Rate limit check error:', err.response?.status, err.message, err.stack);
+    res.status(err.response?.status || 500).json({ 
+      error: 'Rate limit check failed', 
+      details: err.message 
+    });
   }
 });
 
@@ -237,18 +306,27 @@ router.get('/posts/:username', async (req, res) => {
     }
 
     console.log(`[API] Fetching timeline for user: ${username}`);
-    const twitterUser = await client.v2.userByUsername(username, { 'user.fields': ['id', 'public_metrics'] });
-    console.log('[API] Twitter API user response:', twitterUser.data);
-    if (!twitterUser.data) {
+    console.log('[API] Attempting Twitter API call for GET /posts');
+    const userResponse = await axios.get(`https://api.twitter.com/2/users/by/username/${username}`, {
+      headers: {
+        Authorization: `Bearer ${process.env.X_BEARER_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      params: {
+        'user.fields': 'id,public_metrics'
+      }
+    });
+    console.log('[API] Twitter API user response:', userResponse.data);
+    const twitterUser = userResponse.data.data;
+    if (!twitterUser) {
       return res.status(404).json({ error: 'Twitter user not found' });
     }
-    const userId = twitterUser.data.id;
-    const followersCount = twitterUser.data.public_metrics?.followers_count || 0;
+    const userId = twitterUser.id;
+    const followersCount = twitterUser.public_metrics?.followers_count || 0;
 
-    // Update user in MongoDB
     const userData = {
       userId,
-      username: twitterUser.data.username,
+      username: twitterUser.username,
       followers_count: followersCount,
       updatedAt: new Date()
     };
@@ -264,21 +342,30 @@ router.get('/posts/:username', async (req, res) => {
       return res.status(404).json({ error: 'No projects configured' });
     }
 
+    console.log('[API] Attempting Twitter API call for user timeline');
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const tweets = await client.v2.userTimeline(userId.toString(), {
-      'tweet.fields': ['created_at', 'public_metrics', 'text', 'referenced_tweets'],
-      exclude: ['retweets'],
-      max_results: 50,
-      start_time: sevenDaysAgo
+    const tweetsResponse = await axios.get(`https://api.twitter.com/2/users/${userId}/tweets`, {
+      headers: {
+        Authorization: `Bearer ${process.env.X_BEARER_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      params: {
+        'tweet.fields': 'created_at,public_metrics,text,referenced_tweets',
+        exclude: 'retweets',
+        max_results: 50,
+        start_time: sevenDaysAgo
+      }
     });
+    console.log('[API] Twitter API tweets response:', tweetsResponse.data);
+    const tweets = tweetsResponse.data.data || [];
 
     const categorizedPosts = {};
     dbProjects.forEach(project => {
       categorizedPosts[project.name.toUpperCase()] = [];
     });
 
-    if (tweets.meta.result_count) {
-      for await (const tweet of tweets) {
+    if (tweets.length) {
+      for (const tweet of tweets) {
         if (tweet.text.length < 51) {
           await ProcessedPost.findOneAndUpdate({ postId: tweet.id }, { postId: tweet.id, updatedAt: new Date() }, { upsert: true });
           continue;
@@ -394,14 +481,14 @@ router.get('/posts/:username', async (req, res) => {
 
     res.json(response);
   } catch (err) {
-    console.error('[API] GET /posts error:', err.message, err.stack);
-    if (err.code === 429) {
+    console.error('[API] GET /posts error:', err.response?.status, err.message, err.stack);
+    if (err.response?.status === 429) {
       return res.status(429).json({ 
         error: 'Twitter API rate limit exceeded', 
         details: 'Please try again after 15 minutes' 
       });
     }
-    res.status(500).json({ error: 'Server error', details: err.message });
+    res.status(err.response?.status || 500).json({ error: 'Server error', details: err.message });
   }
 });
 
