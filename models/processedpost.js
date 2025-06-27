@@ -1,5 +1,9 @@
 const mongoose = require('mongoose');
-const ProcessedPostSchema = new mongoose.Schema({
-  postId: { type: String, required: true, unique: true, index: true }
+const Schema = mongoose.Schema;
+
+const processedPostSchema = new Schema({
+  postId: { type: String, required: true, unique: true },
+  updatedAt: { type: Date, default: Date.now }
 });
-module.exports = mongoose.model('ProcessedPost', ProcessedPostSchema);
+
+module.exports = mongoose.model('ProcessedPost', processedPostSchema);
