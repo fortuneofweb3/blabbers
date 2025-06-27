@@ -10,7 +10,7 @@
   "dependencies": {
     "express": "^4.19.2",
     "cors": "^2.8.5",
-    "twitter-api-v2": "^1.18.0",
+    "axios": "^1.7.7",
     "mongoose": "^6.13.0",
     "crypto": "^1.0.1",
     "dotenv": "^16.4.5"
