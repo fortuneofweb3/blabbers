@@ -250,7 +250,7 @@ router.get('/rate-limit-status', async (req, res) => {
 
 router.post('/projects', async (req, res) => {
   try {
-    const { name, keywords, description } = req.body;
+    const { name, keywords, description, twitterUsername, userId, profile_image_url, name: projectName, followers_count, following_count } = req.body;
     if (!name) {
       return res.status(400).json({ error: 'Name required' });
     }
@@ -258,6 +258,12 @@ router.post('/projects', async (req, res) => {
       name: name.toUpperCase(),
       keywords: keywords || [],
       description: description || '',
+      twitterUsername: twitterUsername || '',
+      userId: userId || '',
+      profile_image_url: profile_image_url || '',
+      name: projectName || '',
+      followers_count: followers_count || 0,
+      following_count: following_count || 0,
       updatedAt: new Date()
     };
     const project = await Project.findOneAndUpdate(
@@ -275,9 +281,17 @@ router.post('/projects', async (req, res) => {
 
 router.put('/project/:project', async (req, res) => {
   try {
+    const { keywords, description, twitterUsername, userId, profile_image_url, name: projectName, followers_count, following_count } = req.body;
     const projectData = {
-      ...req.body,
       name: req.params.project.toUpperCase(),
+      keywords: keywords || [],
+      description: description || '',
+      twitterUsername: twitterUsername || '',
+      userId: userId || '',
+      profile_image_url: profile_image_url || '',
+      name: projectName || '',
+      followers_count: followers_count || 0,
+      following_count: following_count || 0,
       updatedAt: new Date()
     };
     const project = await Project.findOneAndUpdate(
@@ -365,7 +379,6 @@ router.get('/posts/:username', async (req, res) => {
 
     if (tweets.length) {
       for (const tweet of tweets) {
-        // Skip replies
         if (tweet.referenced_tweets?.[0]?.type === 'replied_to') {
           console.log(`[API] Skipping reply tweet ${tweet.id}`);
           await ProcessedPost.findOneAndUpdate(
@@ -376,7 +389,6 @@ router.get('/posts/:username', async (req, res) => {
           continue;
         }
 
-        // Only include posts and quotes
         if (tweet.referenced_tweets?.[0]?.type && tweet.referenced_tweets[0].type !== 'quoted') {
           console.log(`[API] Skipping non-post/quote tweet ${tweet.id}`);
           await ProcessedPost.findOneAndUpdate(
@@ -522,6 +534,107 @@ router.get('/posts/:username', async (req, res) => {
     res.json(response);
   } catch (err) {
     console.error('[API] GET /posts error:', err.response?.status, err.message, err.stack);
+    if (err.response?.status === 429) {
+      return res.status(429).json({ 
+        error: 'Twitter API rate limit exceeded', 
+        details: 'Please try again after 15 minutes' 
+      });
+    }
+    res.status(err.response?.status || 500).json({ error: 'Server error', details: err.message });
+  }
+});
+
+router.get('/project-details/:project', async (req, res) => {
+  try {
+    const { project } = req.params;
+    const projectName = project.toUpperCase();
+
+    console.log(`[API] Fetching project details for: ${projectName}`);
+
+    // Verify project exists
+    const dbProject = await Project.findOne({ name: projectName }).lean();
+    if (!dbProject) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Check if project has a Twitter username
+    if (!dbProject.twitterUsername) {
+      return res.status(400).json({ error: 'No Twitter username associated with this project' });
+    }
+
+    const twitterUsername = dbProject.twitterUsername;
+
+    // Check for cached project data (within 15 minutes)
+    if (dbProject.userId && dbProject.updatedAt > new Date(Date.now() - 15 * 60 * 1000)) {
+      console.log(`[API] Using fresh cached project data for ${twitterUsername}`);
+      return res.json({
+        userId: dbProject.userId,
+        username: dbProject.twitterUsername,
+        name: dbProject.name,
+        profile_image_url: dbProject.profile_image_url,
+        followers_count: dbProject.followers_count,
+        following_count: dbProject.following_count
+      });
+    }
+
+    console.log(`[API] Attempting Twitter API call for GET /project-details, username: ${twitterUsername}`);
+    const response = await axios.get(`https://api.twitter.com/2/users/by/username/${twitterUsername}`, {
+      headers: {
+        Authorization: `Bearer ${process.env.X_BEARER_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      params: {
+        'user.fields': 'id,name,username,profile_image_url,public_metrics'
+      }
+    });
+    console.log('[API] Twitter API response:', response.data);
+    const twitterUser = response.data.data;
+    if (!twitterUser) {
+      return res.status(404).json({ error: 'Twitter user not found for project' });
+    }
+
+    // Save or update project data in MongoDB
+    const projectData = {
+      name: projectName,
+      keywords: dbProject.keywords || [],
+      description: dbProject.description || '',
+      twitterUsername: twitterUser.username,
+      userId: twitterUser.id,
+      profile_image_url: twitterUser.profile_image_url || '',
+      name: twitterUser.name || '',
+      followers_count: twitterUser.public_metrics?.followers_count || 0,
+      following_count: twitterUser.public_metrics?.following_count || 0,
+      updatedAt: new Date()
+    };
+    const updatedProject = await Project.findOneAndUpdate(
+      { name: projectName },
+      { $set: projectData },
+      { new: true }
+    );
+    console.log(`[MongoDB] Project ${projectName} updated with Twitter details for ${twitterUsername}`);
+
+    res.json({
+      userId: twitterUser.id,
+      username: twitterUser.username,
+      name: twitterUser.name,
+      profile_image_url: twitterUser.profile_image_url,
+      followers_count: twitterUser.public_metrics.followers_count,
+      following_count: twitterUser.public_metrics.following_count
+    });
+  } catch (err) {
+    console.error('[API] GET /project-details error:', err.response?.status, err.message, err.stack);
+    if (err.response?.status === 429 && dbProject.userId) {
+      console.log('[API] Rate limit hit, falling back to stale cached project data');
+      return res.json({
+        userId: dbProject.userId,
+        username: dbProject.twitterUsername,
+        name: dbProject.name,
+        profile_image_url: dbProject.profile_image_url,
+        followers_count: dbProject.followers_count,
+        following_count: dbProject.following_count,
+        warning: 'Using stale cached data due to Twitter API rate limit'
+      });
+    }
     if (err.response?.status === 429) {
       return res.status(429).json({ 
         error: 'Twitter API rate limit exceeded', 
