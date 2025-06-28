@@ -351,7 +351,6 @@ router.get('/posts/:username', async (req, res) => {
       },
       params: {
         'tweet.fields': 'created_at,public_metrics,text,referenced_tweets',
-        exclude: 'retweets',
         max_results: 50,
         start_time: sevenDaysAgo
       }
@@ -366,22 +365,50 @@ router.get('/posts/:username', async (req, res) => {
 
     if (tweets.length) {
       for (const tweet of tweets) {
+        // Skip replies
+        if (tweet.referenced_tweets?.[0]?.type === 'replied_to') {
+          console.log(`[API] Skipping reply tweet ${tweet.id}`);
+          await ProcessedPost.findOneAndUpdate(
+            { postId: tweet.id },
+            { postId: tweet.id, updatedAt: new Date() },
+            { upsert: true }
+          );
+          continue;
+        }
+
+        // Only include posts and quotes
+        if (tweet.referenced_tweets?.[0]?.type && tweet.referenced_tweets[0].type !== 'quoted') {
+          console.log(`[API] Skipping non-post/quote tweet ${tweet.id}`);
+          await ProcessedPost.findOneAndUpdate(
+            { postId: tweet.id },
+            { postId: tweet.id, updatedAt: new Date() },
+            { upsert: true }
+          );
+          continue;
+        }
+
         if (tweet.text.length < 51) {
-          await ProcessedPost.findOneAndUpdate({ postId: tweet.id }, { postId: tweet.id, updatedAt: new Date() }, { upsert: true });
+          console.log(`[API] Skipping short tweet ${tweet.id}`);
+          await ProcessedPost.findOneAndUpdate(
+            { postId: tweet.id },
+            { postId: tweet.id, updatedAt: new Date() },
+            { upsert: true }
+          );
           continue;
         }
 
         if (extractMentions(tweet.text) / tweet.text.length > 0.6) {
-          await ProcessedPost.findOneAndUpdate({ postId: tweet.id }, { postId: tweet.id, updatedAt: new Date() }, { upsert: true });
-          continue;
-        }
-
-        if (tweet.referenced_tweets?.[0]?.type === 'replied_to') {
-          await ProcessedPost.findOneAndUpdate({ postId: tweet.id }, { postId: tweet.id, updatedAt: new Date() }, { upsert: true });
+          console.log(`[API] Skipping mention-heavy tweet ${tweet.id}`);
+          await ProcessedPost.findOneAndUpdate(
+            { postId: tweet.id },
+            { postId: tweet.id, updatedAt: new Date() },
+            { upsert: true }
+          );
           continue;
         }
 
         if (await ProcessedPost.findOne({ postId: tweet.id }).lean()) {
+          console.log(`[API] Skipping already processed tweet ${tweet.id}`);
           continue;
         }
 
@@ -394,7 +421,12 @@ router.get('/posts/:username', async (req, res) => {
           .map(project => project.name.toUpperCase());
 
         if (matchedProjects.length === 0) {
-          await ProcessedPost.findOneAndUpdate({ postId: tweet.id }, { postId: tweet.id, updatedAt: new Date() }, { upsert: true });
+          console.log(`[API] Skipping tweet ${tweet.id} with no project match`);
+          await ProcessedPost.findOneAndUpdate(
+            { postId: tweet.id },
+            { postId: tweet.id, updatedAt: new Date() },
+            { upsert: true }
+          );
           continue;
         }
 
@@ -418,7 +450,7 @@ router.get('/posts/:username', async (req, res) => {
           hashtags: extractHashtags(tweet.text),
           tweetUrl: `https://x.com/${username}/status/${tweet.id}`,
           createdAt: tweet.created_at,
-          tweetType: 'main',
+          tweetType: tweet.referenced_tweets?.[0]?.type === 'quoted' ? 'quote' : 'main',
           updatedAt: new Date()
         };
 
@@ -427,7 +459,11 @@ router.get('/posts/:username', async (req, res) => {
           { $set: postData },
           { upsert: true, new: true }
         );
-        await ProcessedPost.findOneAndUpdate({ postId: tweet.id }, { postId: tweet.id, updatedAt: new Date() }, { upsert: true });
+        await ProcessedPost.findOneAndUpdate(
+          { postId: tweet.id },
+          { postId: tweet.id, updatedAt: new Date() },
+          { upsert: true }
+        );
         console.log(`[MongoDB] Post ${tweet.id} saved for user ${username}`);
 
         matchedProjects.forEach(project => {
@@ -436,7 +472,11 @@ router.get('/posts/:username', async (req, res) => {
       }
     }
 
-    const dbPosts = await Post.find({ userId, createdAt: { $gte: new Date(sevenDaysAgo) } }).lean();
+    const dbPosts = await Post.find({
+      userId,
+      createdAt: { $gte: new Date(sevenDaysAgo) },
+      tweetType: { $in: ['main', 'quote'] }
+    }).lean();
     dbPosts.forEach(post => {
       const postData = {
         SOL_ID: post.SOL_ID || userId,
