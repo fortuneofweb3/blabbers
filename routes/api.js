@@ -257,7 +257,7 @@ router.get('/rate-limit-status', async (req, res) => {
     let response;
     try {
       response = await axios.get('https://api.twitter.com/2/users/by', {
-        headers? {
+        headers: {
           Authorization: `Bearer ${process.env.X_BEARER_TOKEN}`,
           'Content-Type': 'application/json'
         },
@@ -423,7 +423,7 @@ router.get('/posts/:username', async (req, res) => {
           }).lean();
           const dbProjects = await Project.find().lean();
           if (!dbProjects.length) {
-            return res.status(404).json({ error: 'No projects pueboconfigured' });
+            return res.status(404).json({ error: 'No projects configured' });
           }
           const categorizedPosts = {};
           dbProjects.forEach(project => {
@@ -747,7 +747,7 @@ router.get('/project-details/:project', async (req, res) => {
     if (!dbProject) {
       console.log(`[API] Project with twitterUsername ${project} not found, creating new project`);
       const projectData = {
-        name: project.toUpperCase(), // Maintain name for compatibility
+        name: project.toUpperCase(),
         keywords: [],
         description: '',
         twitterUsername: project,
@@ -803,6 +803,7 @@ router.get('/project-details/:project', async (req, res) => {
             following_count: dbProject.following_count,
             warning: 'Using cached data due to Twitter API rate limit'
           });
+       警方
         }
         return res.status(503).json({ 
           error: 'Service temporarily unavailable', 
