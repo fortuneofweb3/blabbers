@@ -8,8 +8,8 @@ const User = require('../models/user');
 
 const router = express.Router();
 
-if (!process.env.X_BEARER_TOKEN) {
-  throw new Error('[API] X_BEARER_TOKEN is not set');
+if (!process.env.X_BEARER_TOKEN || typeof process.env.X_BEARER_TOKEN !== 'string') {
+  throw new Error('[API] X_BEARER_TOKEN is not set or invalid');
 }
 console.log('[API] Twitter API Bearer Token configured');
 
@@ -72,6 +72,12 @@ async function fetchTwitterUser(username) {
     params: {
       'user.fields': 'id,name,username,profile_image_url,public_metrics'
     }
+  }).catch(err => {
+    if (err.response?.status === 429) {
+      rateLimitUntil = new Date(Date.now() + 15 * 60 * 1000);
+      console.log(`[API] Rate limit hit, pausing until ${rateLimitUntil}`);
+    }
+    throw err;
   });
   console.log('[API] Twitter API response:', response.data);
   return response.data.data;
@@ -106,8 +112,6 @@ router.post('/users', async (req, res) => {
       }
     } catch (err) {
       if (err.response?.status === 429) {
-        rateLimitUntil = new Date(Date.now() + 15 * 60 * 1000);
-        console.log(`[API] Rate limit hit, pausing until ${rateLimitUntil}`);
         const cachedUser = await User.findOne({ username }).lean();
         if (cachedUser) {
           console.log('[API] Using cached user data');
@@ -185,8 +189,6 @@ router.get('/user-details/:username', async (req, res) => {
       }
     } catch (err) {
       if (err.response?.status === 429) {
-        rateLimitUntil = new Date(Date.now() + 15 * 60 * 1000);
-        console.log(`[API] Rate limit hit, pausing until ${rateLimitUntil}`);
         if (cachedUser) {
           console.log('[API] Using cached user data');
           return res.json({
@@ -513,6 +515,12 @@ router.get('/posts/:username', async (req, res) => {
           max_results: 50,
           start_time: sevenDaysAgo
         }
+      }).catch(err => {
+        if (err.response?.status === 429) {
+          rateLimitUntil = new Date(Date.now() + 15 * 60 * 1000);
+          console.log(`[API] Rate limit hit, pausing until ${rateLimitUntil}`);
+        }
+        throw err;
       });
       console.log('[API] Twitter API tweets response:', tweetsResponse.data);
       tweets = tweetsResponse.data.data || [];
@@ -803,7 +811,6 @@ router.get('/project-details/:project', async (req, res) => {
             following_count: dbProject.following_count,
             warning: 'Using cached data due to Twitter API rate limit'
           });
-       警方
         }
         return res.status(503).json({ 
           error: 'Service temporarily unavailable', 
