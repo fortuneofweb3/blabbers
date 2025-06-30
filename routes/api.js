@@ -257,7 +257,7 @@ router.get('/rate-limit-status', async (req, res) => {
     let response;
     try {
       response = await axios.get('https://api.twitter.com/2/users/by', {
-        headers: {
+        headers? {
           Authorization: `Bearer ${process.env.X_BEARER_TOKEN}`,
           'Content-Type': 'application/json'
         },
@@ -365,9 +365,42 @@ router.get('/posts/:username', async (req, res) => {
   try {
     const { username } = req.params;
 
-    const userDoc = await User.findOne({ username }).lean();
+    let userDoc = await User.findOne({ username }).lean();
     if (!userDoc) {
-      return res.status(404).json({ error: 'User not found in database' });
+      console.log(`[API] User ${username} not found, fetching and saving Twitter details`);
+      let twitterUser;
+      try {
+        twitterUser = await fetchTwitterUser(username);
+        if (!twitterUser) {
+          return res.status(404).json({ error: 'Twitter user not found' });
+        }
+      } catch (err) {
+        if (err.response?.status === 429) {
+          rateLimitUntil = new Date(Date.now() + 15 * 60 * 1000);
+          console.log(`[API] Rate limit hit, pausing until ${rateLimitUntil}`);
+          return res.status(503).json({ 
+            error: 'Service temporarily unavailable', 
+            details: 'Twitter API rate limit exceeded' 
+          });
+        }
+        throw err;
+      }
+
+      const userData = {
+        userId: twitterUser.id,
+        username: twitterUser.username,
+        name: twitterUser.name || '',
+        profile_image_url: twitterUser.profile_image_url || '',
+        followers_count: twitterUser.public_metrics?.followers_count || 0,
+        following_count: twitterUser.public_metrics?.following_count || 0,
+        updatedAt: new Date()
+      };
+      userDoc = await User.findOneAndUpdate(
+        { username },
+        { $set: userData },
+        { upsert: true, new: true, lean: true }
+      );
+      console.log(`[MongoDB] New user ${username} saved with Twitter details:`, userData);
     }
 
     console.log(`[API] Fetching timeline for user: ${username}`);
@@ -390,7 +423,7 @@ router.get('/posts/:username', async (req, res) => {
           }).lean();
           const dbProjects = await Project.find().lean();
           if (!dbProjects.length) {
-            return res.status(404).json({ error: 'No projects configured' });
+            return res.status(404).json({ error: 'No projects pueboconfigured' });
           }
           const categorizedPosts = {};
           dbProjects.forEach(project => {
@@ -624,14 +657,13 @@ router.get('/posts/:username', async (req, res) => {
           project: matchedProjects,
           score: qualityScore,
           blabz: totalBlabz,
-          likes: tweet.public_metrics.like_count,
-          retweets: tweet.public_metrics.retweet_count,
-          replies: tweet.public_metrics.reply_count,
+          likes: tweet.public_metrics?.like_count || 0,
+          retweets: tweet.public_metrics?.retweet_count || 0,
+          replies: tweet.public_metrics?.reply_count || 0,
           hashtags: extractHashtags(tweet.text),
           tweetUrl: `https://x.com/${username}/status/${tweet.id}`,
-          createdAt: tweet.created_at,
-          tweetType: tweet.referenced_tweets?.[0]?.type === 'quoted' ? 'quote' : 'main',
-          updatedAt: new Date()
+          createdAt: new Date(tweet.created_at),
+          tweetType: tweet.referenced_tweets?.[0]?.type === 'quoted' ? 'quote' : 'main'
         };
 
         const post = await Post.findOneAndUpdate(
@@ -647,7 +679,9 @@ router.get('/posts/:username', async (req, res) => {
         console.log(`[MongoDB] Post ${tweet.id} saved for user ${username}`);
 
         matchedProjects.forEach(project => {
-          categorizedPosts[project].push(postData);
+          if (categorizedPosts[project]) {
+            categorizedPosts[project].push(postData);
+          }
         });
       }
     }
