@@ -307,12 +307,13 @@ router.get('/rate-limit-status', async (req, res) => {
 
 router.post('/projects', async (req, res) => {
   try {
-    const { name, keywords, description, twitterUsername, userId, profile_image_url, followers_count, following_count } = req.body;
+    const { name, keywords, description, twitterUsername, userId, profile_image_url, displayName, followers_count, following_count } = req.body;
     if (!name) {
       return res.status(400).json({ error: 'Name required' });
     }
     const projectData = {
       name: name.toUpperCase(),
+      displayName: displayName || '',
       keywords: keywords || [],
       description: description || '',
       twitterUsername: twitterUsername || '',
@@ -337,9 +338,10 @@ router.post('/projects', async (req, res) => {
 
 router.put('/project/:project', async (req, res) => {
   try {
-    const { keywords, description, twitterUsername, userId, profile_image_url, followers_count, following_count } = req.body;
+    const { keywords, description, twitterUsername, userId, profile_image_url, displayName, followers_count, following_count } = req.body;
     const projectData = {
       name: req.params.project.toUpperCase(),
+      displayName: displayName || '',
       keywords: keywords || [],
       description: description || '',
       twitterUsername: twitterUsername || '',
@@ -403,6 +405,7 @@ router.post('/projects/:twitterUsername', async (req, res) => {
             project: {
               _id: cachedProject._id,
               name: cachedProject.name,
+              displayName: cachedProject.displayName,
               createdAt: cachedProject.createdAt,
               description: cachedProject.description || '',
               keywords: cachedProject.keywords || [],
@@ -427,6 +430,7 @@ router.post('/projects/:twitterUsername', async (req, res) => {
 
     const projectData = {
       name: name.toUpperCase(),
+      displayName: twitterUser.name || '',
       keywords: keywords || [],
       description: description || '',
       website: website || '',
@@ -451,6 +455,7 @@ router.post('/projects/:twitterUsername', async (req, res) => {
       project: {
         _id: project._id,
         name: project.name,
+        displayName: project.displayName,
         createdAt: project.createdAt,
         description: project.description,
         keywords: project.keywords,
@@ -554,7 +559,8 @@ router.get('/posts/:username', async (req, res) => {
               hashtags: post.hashtags || [],
               tweetUrl: post.tweetUrl,
               createdAt: post.createdAt,
-              tweetType: post.tweetType
+              tweetType: post.tweetType,
+              updatedAt: post.updatedAt
             };
             post.project.forEach(project => {
               if (categorizedPosts[project]) {
@@ -592,6 +598,8 @@ router.get('/posts/:username', async (req, res) => {
     const userData = {
       userId,
       username: twitterUser.username,
+      name: twitterUser.name || '',
+      profile_image_url: twitterUser.profile_image_url || '',
       followers_count: followersCount,
       updatedAt: new Date()
     };
@@ -660,7 +668,8 @@ router.get('/posts/:username', async (req, res) => {
             hashtags: post.hashtags || [],
             tweetUrl: post.tweetUrl,
             createdAt: post.createdAt,
-            tweetType: post.tweetType
+            tweetType: post.tweetType,
+            updatedAt: post.updatedAt
           };
           post.project.forEach(project => {
             if (categorizedPosts[project]) {
@@ -767,7 +776,8 @@ router.get('/posts/:username', async (req, res) => {
           hashtags: extractHashtags(tweet.text),
           tweetUrl: `https://x.com/${username}/status/${tweet.id}`,
           createdAt: new Date(tweet.created_at),
-          tweetType: tweet.referenced_tweets?.[0]?.type || 'main'
+          tweetType: tweet.referenced_tweets?.[0]?.type || 'main',
+          updatedAt: new Date()
         };
 
         const post = await Post.findOneAndUpdate(
@@ -812,7 +822,8 @@ router.get('/posts/:username', async (req, res) => {
         hashtags: post.hashtags || [],
         tweetUrl: post.tweetUrl,
         createdAt: post.createdAt,
-        tweetType: post.tweetType
+        tweetType: post.tweetType,
+        updatedAt: post.updatedAt
       };
       post.project.forEach(project => {
         if (categorizedPosts[project]) {
@@ -837,149 +848,845 @@ router.get('/posts/:username', async (req, res) => {
       posts: categorizedPosts
     });
   } catch (err) {
-    console.error('[API] GET /posts error:', err.response?.status, err.message, err.stack);
-    res.status(err.response?.status || 500).json({ error: 'Server error', details: err.message });
-  }
-});
-
-router.get('/project-details/:project', async (req, res) => {
-  try {
-    const { project } = req.params;
-    console.log(`[API] Fetching project details for twitterUsername: ${project}`);
-
-    let dbProject = await Project.findOne({ twitterUsername: project }).lean();
-    if (!dbProject) {
-      console.log(`[API] Project with twitterUsername ${project} not found, creating new project`);
-      const projectData = {
-        name: project.toUpperCase(),
-        keywords: [],
-        description: '',
-        twitterUsername: project,
-        userId: '',
-        profile_image_url: '',
-        followers_count: 0,
-        following_count: 0,
-        updatedAt: new Date(),
-        createdAt: new Date()
+firestore.collection('users').doc(user.uid).set({
+        SOL_ID: solId,
+        DEV_ID: devId,
+        userId: twitterUser.id,
+        username: twitterUser.username,
+        name: twitterUser.name || '',
+        profile_image_url: twitterUser.profile_image_url || '',
+        followers_count: twitterUser.public_metrics?.followers_count || 0,
+        following_count: twitterUser.public_metrics?.following_count || 0,
+        updatedAt: new Date()
+      }, { merge: true });
+      console.log(`[Firestore] User ${username} saved`);
+      res.json({ message: `User ${username} saved`, user: {
+        SOL_ID: solId,
+        DEV_ID: devId,
+        userId: twitterUser.id,
+        username: twitterUser.username,
+        name: twitterUser.name,
+        profile_image_url: twitterUser.profile_image_url,
+        followers_count: twitterUser.public_metrics.followers_count,
+        following_count: twitterUser.public_metrics.following_count
+      }});
+    } catch (err) {
+      console.error('[API] POST /users error:', err.response?.status, err.message, err.stack);
+      res.status(err.response?.status || 500).json({ error: 'Server error', details: err.message });
+    }
+  });
+  
+  router.get('/user-details/:username', async (req, res) => {
+    try {
+      console.log(`[API] Fetching user: ${req.params.username}`);
+      const cachedUser = await firestore.collection('users').where('username', '==', req.params.username).get();
+      let userDoc;
+      if (!cachedUser.empty && cachedUser.docs[0].data().updatedAt.toDate() > new Date(Date.now() - 15 * 60 * 1000)) {
+        userDoc = cachedUser.docs[0].data();
+        console.log('[API] Using fresh cached user data');
+        return res.json({
+          SOL_ID: userDoc.SOL_ID || '',
+          DEV_ID: userDoc.DEV_ID || '',
+          userId: userDoc.userId,
+          username: userDoc.username,
+          name: userDoc.name,
+          profile_image_url: userDoc.profile_image_url,
+          followers_count: userDoc.followers_count,
+          following_count: userDoc.following_count
+        });
+      }
+  
+      let twitterUser;
+      try {
+        twitterUser = await fetchTwitterUser(req.params.username);
+        if (!twitterUser) {
+          return res.status(404).json({ error: 'User not found' });
+        }
+      } catch (err) {
+        if (err.response?.status === 429) {
+          if (!cachedUser.empty) {
+            userDoc = cachedUser.docs[0].data();
+            console.log('[API] Using cached user data');
+            return res.json({
+              SOL_ID: userDoc.SOL_ID || '',
+              DEV_ID: userDoc.DEV_ID || '',
+              userId: userDoc.userId,
+              username: userDoc.username,
+              name: userDoc.name,
+              profile_image_url: userDoc.profile_image_url,
+              followers_count: userDoc.followers_count,
+              following_count: userDoc.following_count,
+              warning: 'Using cached data due to Twitter API rate limit'
+            });
+          }
+          return res.status(503).json({ 
+            error: 'Service temporarily unavailable', 
+            details: 'Twitter API rate limit exceeded, no cached data available' 
+          });
+        }
+        throw err;
+      }
+  
+      const userData = {
+        userId: twitterUser.id,
+        username: twitterUser.username,
+        name: twitterUser.name || '',
+        profile_image_url: twitterUser.profile_image_url || '',
+        followers_count: twitterUser.public_metrics?.followers_count || 0,
+        following_count: twitterUser.public_metrics?.following_count || 0,
+        updatedAt: new Date()
       };
-      dbProject = await Project.findOneAndUpdate(
-        { twitterUsername: project },
-        { $set: projectData },
-        { upsert: true, new: true }
-      ).lean();
-      console.log(`[MongoDB] Project with twitterUsername ${project} created:`, dbProject);
+      await firestore.collection('users').doc(twitterUser.id).set(userData, { merge: true });
+      console.log('[API] Firestore userDoc updated:', userData);
+  
+      res.json({
+        SOL_ID: userData.SOL_ID || '',
+        DEV_ID: userData.DEV_ID || '',
+        userId: twitterUser.id,
+        username: twitterUser.username,
+        name: twitterUser.name,
+        profile_image_url: twitterUser.profile_image_url,
+        followers_count: twitterUser.public_metrics.followers_count,
+        following_count: twitterUser.public_metrics.following_count
+      });
+    } catch (err) {
+      console.error('[API] GET /user-details error:', err.response?.status, err.message, err.stack);
+      res.status(err.response?.status || 500).json({ error: 'Server error', details: err.message });
     }
-
-    if (!dbProject.twitterUsername) {
-      return res.status(400).json({ error: 'No Twitter username associated with this project' });
-    }
-
-    if (dbProject.userId && dbProject.updatedAt > new Date(Date.now() - 15 * 60 * 1000)) {
-      console.log(`[API] Using fresh cached project data for ${dbProject.twitterUsername}`);
-      return res.json({
-        _id: dbProject._id,
-        name: dbProject.name,
-        createdAt: dbProject.createdAt,
-        description: dbProject.description || '',
-        keywords: dbProject.keywords || [],
-        website: dbProject.website || '',
-        twitterUsername: dbProject.twitterUsername,
-        userId: dbProject.userId,
-        profile_image_url: dbProject.profile_image_url,
-        followers_count: dbProject.followers_count,
-        following_count: dbProject.following_count,
-        updatedAt: dbProject.updatedAt
+  });
+  
+  router.get('/rate-limit-status', async (req, res) => {
+    try {
+      console.log('[API] Checking Twitter API rate limit status');
+      if (rateLimitUntil && rateLimitUntil > new Date()) {
+        return res.json({ 
+          message: 'Rate limit active', 
+          rateLimit: {
+            remaining: 0,
+            reset: rateLimitUntil
+          }
+        });
+      }
+  
+      let response;
+      try {
+        response = await axios.get('https://api.twitter.com/2/users/by', {
+          headers: {
+            Authorization: `Bearer ${process.env.X_BEARER_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          params: {
+            usernames: 'test',
+            'user.fields': 'id'
+          }
+        });
+      } catch (err) {
+        if (err.response?.status === 429) {
+          rateLimitUntil = new Date(Date.now() + 15 * 60 * 1000);
+          console.log(`[API] Rate limit hit, pausing until ${rateLimitUntil}`);
+          return res.json({ 
+            message: 'Rate limit active', 
+            rateLimit: {
+              remaining: 0,
+              reset: rateLimitUntil
+            }
+          });
+        }
+        throw err;
+      }
+  
+      console.log('[API] Rate limit check response:', response.headers);
+      res.json({ 
+        message: 'Rate limit check', 
+        rateLimit: {
+          limit: response.headers['x-rate-limit-limit'],
+          remaining: response.headers['x-rate-limit-remaining'],
+          reset: new Date(parseInt(response.headers['x-rate-limit-reset']) * 1000)
+        }
+      });
+    } catch (err) {
+      console.error('[API] Rate limit check error:', err.response?.status, err.message, err.stack);
+      res.status(err.response?.status || 500).json({ 
+        error: 'Rate limit check failed', 
+        details: err.message 
       });
     }
-
-    let twitterUser;
+  });
+  
+  router.post('/projects', async (req, res) => {
     try {
-      twitterUser = await fetchTwitterUser(dbProject.twitterUsername);
-      if (!twitterUser) {
-        return res.status(404).json({ error: 'Twitter user not found for project' });
+      const { name, keywords, description, twitterUsername, userId, profile_image_url, displayName, followers_count, following_count } = req.body;
+      if (!name) {
+        return res.status(400).json({ error: 'Name required' });
       }
+      const projectData = {
+        name: name.toUpperCase(),
+        displayName: displayName || '',
+        keywords: keywords || [],
+        description: description || '',
+        twitterUsername: twitterUsername || '',
+        userId: userId || '',
+        profile_image_url: profile_image_url || '',
+        followers_count: followers_count || 0,
+        following_count: following_count || 0,
+        updatedAt: new Date()
+      };
+      await firestore.collection('projects').doc(name.toUpperCase()).set(projectData, { merge: true });
+      console.log(`[Firestore] Project ${name} saved:`, projectData);
+      res.json({ message: `Project ${name} added`, project: projectData });
     } catch (err) {
-      if (err.response?.status === 429) {
-        rateLimitUntil = new Date(Date.now() + 15 * 60 * 1000);
-        console.log(`[API] Rate limit hit, pausing until ${rateLimitUntil}`);
-        if (dbProject.userId) {
-          console.log('[API] Using cached project data');
+      console.error('[API] POST /projects error:', err.message, err.stack);
+      res.status(400).json({ error: 'Server error', details: err.message });
+    }
+  });
+  
+  router.put('/project/:project', async (req, res) => {
+    try {
+      const { keywords, description, twitterUsername, userId, profile_image_url, displayName, followers_count, following_count } = req.body;
+      const projectData = {
+        name: req.params.project.toUpperCase(),
+        displayName: displayName || '',
+        keywords: keywords || [],
+        description: description || '',
+        twitterUsername: twitterUsername || '',
+        userId: userId || '',
+        profile_image_url: profile_image_url || '',
+        followers_count: followers_count || 0,
+        following_count: following_count || 0,
+        updatedAt: new Date()
+      };
+      const projectRef = await firestore.collection('projects').doc(req.params.project.toUpperCase()).get();
+      if (!projectRef.exists) {
+        return res.status(404).json({ error: 'Project not found' });
+      }
+      await firestore.collection('projects').doc(req.params.project.toUpperCase()).set(projectData, { merge: true });
+      console.log(`[Firestore] Project ${req.params.project} updated:`, projectData);
+      res.json({ message: `Project ${req.params.project} updated`, project: projectData });
+    } catch (err) {
+      console.error('[API] PUT /project error:', err.message, err.stack);
+      res.status(500).json({ error: 'Server error', details: err.message });
+    }
+  });
+  
+  router.post('/projects/:twitterUsername', async (req, res) => {
+    try {
+      const { twitterUsername } = req.params;
+      const { name, keywords, description, website, createdAt } = req.body;
+  
+      if (!name || !twitterUsername) {
+        return res.status(400).json({ error: 'name and twitterUsername required' });
+      }
+  
+      if (!Array.isArray(keywords) || keywords.some(k => typeof k !== 'string')) {
+        return res.status(400).json({ error: 'keywords must be an array of strings' });
+      }
+  
+      if (website && !/^https?:\/\/[^\s$.?#].[^\s]*$/.test(website)) {
+        return res.status(400).json({ error: 'Invalid website URL' });
+      }
+  
+      if (createdAt && !isValidDate(createdAt)) {
+        return res.status(400).json({ error: 'Invalid createdAt date' });
+      }
+  
+      console.log(`[API] Fetching Twitter user for project: ${twitterUsername}`);
+      let twitterUser;
+      try {
+        twitterUser = await fetchTwitterUser(twitterUsername);
+        if (!twitterUser) {
+          return res.status(404).json({ error: 'Twitter user not found' });
+        }
+      } catch (err) {
+        if (err.response?.status === 429) {
+          const cachedProject = await firestore.collection('projects').where('twitterUsername', '==', twitterUsername).get();
+          if (!cachedProject.empty) {
+            const projectData = cachedProject.docs[0].data();
+            console.log('[API] Using cached project data');
+            return res.json({
+              message: `Project ${name} retrieved from cache`,
+              project: {
+                _id: cachedProject.docs[0].id,
+                name: projectData.name,
+                displayName: projectData.displayName,
+                createdAt: projectData.createdAt ? projectData.createdAt.toDate() : null,
+                description: projectData.description || '',
+                keywords: projectData.keywords || [],
+                website: projectData.website || '',
+                twitterUsername: projectData.twitterUsername,
+                userId: projectData.userId,
+                profile_image_url: projectData.profile_image_url,
+                followers_count: projectData.followers_count,
+                following_count: projectData.following_count,
+                updatedAt: projectData.updatedAt ? projectData.updatedAt.toDate() : null
+              },
+              warning: 'Using cached data due to Twitter API rate limit'
+            });
+          }
+          return res.status(503).json({ 
+            error: 'Service temporarily unavailable', 
+            details: 'Twitter API rate limit exceeded, no cached data available' 
+          });
+        }
+        throw err;
+      }
+  
+      const projectData = {
+        name: name.toUpperCase(),
+        displayName: twitterUser.name || '',
+        keywords: keywords || [],
+        description: description || '',
+        website: website || '',
+        twitterUsername: twitterUser.username,
+        userId: twitterUser.id,
+        profile_image_url: twitterUser.profile_image_url || '',
+        followers_count: twitterUser.public_metrics?.followers_count || 0,
+        following_count: twitterUser.public_metrics?.following_count || 0,
+        updatedAt: new Date(),
+        createdAt: createdAt ? new Date(createdAt) : new Date()
+      };
+  
+      await firestore.collection('projects').doc(twitterUser.username).set(projectData, { merge: true });
+      console.log(`[Firestore] Project ${name} saved/updated:`, projectData);
+  
+      res.json({
+        message: `Project ${name} saved/updated`,
+        project: {
+          _id: twitterUser.username,
+          name: projectData.name,
+          displayName: projectData.displayName,
+          createdAt: projectData.createdAt,
+          description: projectData.description,
+          keywords: projectData.keywords,
+          website: projectData.website,
+          twitterUsername: projectData.twitterUsername,
+          userId: projectData.userId,
+          profile_image_url: projectData.profile_image_url,
+          followers_count: projectData.followers_count,
+          following_count: projectData.following_count,
+          updatedAt: projectData.updatedAt
+        }
+      });
+    } catch (err) {
+      console.error('[API] POST /projects/:twitterUsername error:', err.response?.status, err.message, err.stack);
+      res.status(err.response?.status || 500).json({ error: 'Server error', details: err.message });
+    }
+  });
+  
+  router.get('/posts/:username', async (req, res) => {
+    try {
+      const { username } = req.params;
+  
+      let userDoc = await firestore.collection('users').where('username', '==', username).get();
+      if (userDoc.empty) {
+        console.log(`[API] User ${username} not found, fetching and saving Twitter details`);
+        let twitterUser;
+        try {
+          twitterUser = await fetchTwitterUser(username);
+          if (!twitterUser) {
+            return res.status(404).json({ error: 'Twitter user not found' });
+          }
+        } catch (err) {
+          if (err.response?.status === 429) {
+            rateLimitUntil = new Date(Date.now() + 15 * 60 * 1000);
+            console.log(`[API] Rate limit hit, pausing until ${rateLimitUntil}`);
+            return res.status(503).json({ 
+              error: 'Service temporarily unavailable', 
+              details: 'Twitter API rate limit exceeded' 
+            });
+          }
+          throw err;
+        }
+  
+        const userData = {
+          userId: twitterUser.id,
+          username: twitterUser.username,
+          name: twitterUser.name || '',
+          profile_image_url: twitterUser.profile_image_url || '',
+          followers_count: twitterUser.public_metrics?.followers_count || 0,
+          following_count: twitterUser.public_metrics?.following_count || 0,
+          updatedAt: new Date()
+        };
+        await firestore.collection('users').doc(twitterUser.id).set(userData, { merge: true });
+        userDoc = { docs: [{ data: () => userData }] };
+        console.log(`[Firestore] New user ${username} saved with Twitter details:`, userData);
+      } else {
+        userDoc = userDoc.docs[0].data();
+      }
+  
+      console.log(`[API] Fetching timeline for user: ${username}`);
+      let twitterUser;
+      try {
+        twitterUser = await fetchTwitterUser(username);
+        if (!twitterUser) {
+          return res.status(404).json({ error: 'Twitter user not found' });
+        }
+      } catch (err) {
+        if (err.response?.status === 429) {
+          rateLimitUntil = new Date(Date.now() + 15 * 60 * 1000);
+          console.log(`[API] Rate limit hit, pausing until ${rateLimitUntil}`);
+          if (userDoc) {
+            console.log('[API] Using cached user data for posts');
+            const cachedPosts = await firestore.collection('posts')
+              .where('userId', '==', userDoc.userId)
+              .where('createdAt', '>=', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
+              .where('tweetType', 'in', ['main', 'quote', 'replied_to'])
+              .get();
+            const dbProjects = await firestore.collection('projects').get();
+            if (dbProjects.empty) {
+              return res.status(404).json({ error: 'No projects configured' });
+            }
+            const categorizedPosts = {};
+            dbProjects.forEach(doc => {
+              categorizedPosts[doc.data().name.toUpperCase()] = [];
+            });
+            cachedPosts.forEach(doc => {
+              const post = doc.data();
+              const postData = {
+                SOL_ID: post.SOL_ID || userDoc.userId,
+                DEV_ID: post.DEV_ID || '',
+                userId: post.userId,
+                username: post.username,
+                postId: post.postId,
+                content: post.content,
+                project: post.project,
+                score: post.score,
+                blabz: post.blabz,
+                likes: post.likes,
+                retweets: post.retweets,
+                replies: post.replies,
+                hashtags: post.hashtags || [],
+                tweetUrl: post.tweetUrl,
+                createdAt: post.createdAt.toDate(),
+                tweetType: post.tweetType,
+                updatedAt: post.updatedAt.toDate()
+              };
+              post.project.forEach(project => {
+                if (categorizedPosts[project]) {
+                  categorizedPosts[project].push(postData);
+                }
+              });
+            });
+            for (const project in categorizedPosts) {
+              const seenPostIds = new Set();
+              categorizedPosts[project] = categorizedPosts[project].filter(post => {
+                if (seenPostIds.has(post.postId)) return false;
+                seenPostIds.add(post.postId);
+                return true;
+              });
+              categorizedPosts[project].sort((a, b) => b.score - a.score);
+            }
+            const totalPosts = Object.values(categorizedPosts).reduce((sum, posts) => sum + posts.length, 0);
+            return res.json({
+              message: totalPosts ? 'Posts retrieved from cache' : 'No relevant posts found in cache',
+              posts: categorizedPosts,
+              warning: 'Using cached data due to Twitter API rate limit'
+            });
+          }
+          return res.status(503).json({ 
+            error: 'Service temporarily unavailable', 
+            details: 'Twitter API rate limit exceeded, no cached data available' 
+          });
+        }
+        throw err;
+      }
+  
+      const userId = twitterUser.id;
+      const followersCount = twitterUser.public_metrics?.followers_count || 0;
+  
+      const userData = {
+        userId,
+        username: twitterUser.username,
+        name: twitterUser.name || '',
+        profile_image_url: twitterUser.profile_image_url || '',
+        followers_count: followersCount,
+        updatedAt: new Date()
+      };
+      await firestore.collection('users').doc(userId).set(userData, { merge: true });
+      console.log(`[Firestore] User ${username} updated`);
+  
+      const dbProjects = await firestore.collection('projects').get();
+      if (dbProjects.empty) {
+        return res.status(404).json({ error: 'No projects configured' });
+      }
+  
+      console.log('[API] Attempting Twitter API call for user timeline');
+      let tweets;
+      try {
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        const tweetsResponse = await axios.get(`https://api.twitter.com/2/users/${userId}/tweets`, {
+          headers: {
+            Authorization: `Bearer ${process.env.X_BEARER_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          params: {
+            'tweet.fields': 'created_at,public_metrics,text,referenced_tweets',
+            max_results: 50,
+            start_time: sevenDaysAgo
+          }
+        }).catch(err => {
+          if (err.response?.status === 429) {
+            rateLimitUntil = new Date(Date.now() + 15 * 60 * 1000);
+            console.log(`[API] Rate limit hit, pausing until ${rateLimitUntil}`);
+          }
+          throw err;
+        });
+        console.log('[API] Twitter API tweets response:', tweetsResponse.data);
+        tweets = tweetsResponse.data.data || [];
+      } catch (err) {
+        if (err.response?.status === 429) {
+          rateLimitUntil = new Date(Date.now() + 15 * 60 * 1000);
+          console.log(`[API] Rate limit hit, pausing until ${rateLimitUntil}`);
+          const cachedPosts = await firestore.collection('posts')
+            .where('userId', '==', userDoc.userId)
+            .where('createdAt', '>=', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
+            .where('tweetType', 'in', ['main', 'quote', 'replied_to'])
+            .get();
+          const categorizedPosts = {};
+          dbProjects.forEach(doc => {
+            categorizedPosts[doc.data().name.toUpperCase()] = [];
+          });
+          cachedPosts.forEach(doc => {
+            const post = doc.data();
+            const postData = {
+              SOL_ID: post.SOL_ID || userDoc.userId,
+              DEV_ID: post.DEV_ID || '',
+              userId: post.userId,
+              username: post.username,
+              postId: post.postId,
+              content: post.content,
+              project: post.project,
+              score: post.score,
+              blabz: post.blabz,
+              likes: post.likes,
+              retweets: post.retweets,
+              replies: post.replies,
+              hashtags: post.hashtags || [],
+              tweetUrl: post.tweetUrl,
+              createdAt: post.createdAt.toDate(),
+              tweetType: post.tweetType,
+              updatedAt: post.updatedAt.toDate()
+            };
+            post.project.forEach(project => {
+              if (categorizedPosts[project]) {
+                categorizedPosts[project].push(postData);
+              }
+            });
+          });
+          for (const project in categorizedPosts) {
+            const seenPostIds = new Set();
+            categorizedPosts[project] = categorizedPosts[project].filter(post => {
+              if (seenPostIds.has(post.postId)) return false;
+              seenPostIds.add(post.postId);
+              return true;
+            });
+            categorizedPosts[project].sort((a, b) => b.score - a.score);
+          }
+          const totalPosts = Object.values(categorizedPosts).reduce((sum, posts) => sum + posts.length, 0);
           return res.json({
-            _id: dbProject._id,
-            name: dbProject.name,
-            createdAt: dbProject.createdAt,
-            description: dbProject.description || '',
-            keywords: dbProject.keywords || [],
-            website: dbProject.website || '',
-            twitterUsername: dbProject.twitterUsername,
-            userId: dbProject.userId,
-            profile_image_url: dbProject.profile_image_url,
-            followers_count: dbProject.followers_count,
-            following_count: dbProject.following_count,
-            updatedAt: dbProject.updatedAt,
+            message: totalPosts ? 'Posts retrieved from cache' : 'No relevant posts found in cache',
+            posts: categorizedPosts,
             warning: 'Using cached data due to Twitter API rate limit'
           });
         }
-        return res.status(503).json({ 
-          error: 'Service temporarily unavailable', 
-          details: 'Twitter API rate limit exceeded, no cached data available' 
+        throw err;
+      }
+  
+      const categorizedPosts = {};
+      dbProjects.forEach(doc => {
+        categorizedPosts[doc.data().name.toUpperCase()] = [];
+      });
+  
+      if (tweets.length) {
+        for (const tweet of tweets) {
+          if (tweet.referenced_tweets?.[0]?.type && !['quoted', 'replied_to'].includes(tweet.referenced_tweets[0].type)) {
+            console.log(`[API] Skipping non-post/quote/reply tweet ${tweet.id}`);
+            await firestore.collection('processedPosts').doc(tweet.id).set({
+              postId: tweet.id,
+              updatedAt: new Date()
+            }, { merge: true });
+            continue;
+          }
+  
+          if (tweet.text.length < 51) {
+            console.log(`[API] Skipping short tweet ${tweet.id}`);
+            await firestore.collection('processedPosts').doc(tweet.id).set({
+              postId: tweet.id,
+              updatedAt: new Date()
+            }, { merge: true });
+            continue;
+          }
+  
+          if (extractMentions(tweet.text) / tweet.text.length > 0.6) {
+            console.log(`[API] Skipping mention-heavy tweet ${tweet.id}`);
+            await firestore.collection('processedPosts').doc(tweet.id).set({
+              postId: tweet.id,
+              updatedAt: new Date()
+            }, { merge: true });
+            continue;
+          }
+  
+          const processedPost = await firestore.collection('processedPosts').doc(tweet.id).get();
+          if (processedPost.exists) {
+            console.log(`[API] Skipping already processed tweet ${tweet.id}`);
+            continue;
+          }
+  
+          const text = tweet.text.toLowerCase();
+          const matchedProjects = dbProjects.docs
+            .filter(doc => {
+              const project = doc.data();
+              const terms = [project.name.toLowerCase(), ...project.keywords.map(k => k.toLowerCase())];
+              return terms.some(term => text.includes(term));
+            })
+            .map(doc => doc.data().name.toUpperCase());
+  
+          if (matchedProjects.length === 0) {
+            console.log(`[API] Skipping tweet ${tweet.id} with no project match`);
+            await firestore.collection('processedPosts').doc(tweet.id).set({
+              postId: tweet.id,
+              updatedAt: new Date()
+            }, { merge: true });
+            continue;
+          }
+  
+          const qualityScore = calculateQualityScore(tweet, followersCount);
+          const projectBlabz = parseFloat(calculateBlabzPerProject(qualityScore));
+          const totalBlabz = (projectBlabz * matchedProjects.length).toFixed(4);
+  
+          const postData = {
+            SOL_ID: userDoc.SOL_ID || userId,
+            DEV_ID: userDoc.DEV_ID || '',
+            userId,
+            username,
+            postId: tweet.id,
+            content: tweet.text,
+            project: matchedProjects,
+            score: qualityScore,
+            blabz: totalBlabz,
+            likes: tweet.public_metrics?.like_count || 0,
+            retweets: tweet.public_metrics?.retweet_count || 0,
+            replies: tweet.public_metrics?.reply_count || 0,
+            hashtags: extractHashtags(tweet.text),
+            tweetUrl: `https://x.com/${username}/status/${tweet.id}`,
+            createdAt: new Date(tweet.created_at),
+            tweetType: tweet.referenced_tweets?.[0]?.type || 'main',
+            updatedAt: new Date()
+          };
+  
+          await firestore.collection('posts').doc(tweet.id).set(postData, { merge: true });
+          await firestore.collection('processedPosts').doc(tweet.id).set({
+            postId: tweet.id,
+            updatedAt: new Date()
+          }, { merge: true });
+          console.log(`[Firestore] Post ${tweet.id} saved for user ${username}`);
+  
+          matchedProjects.forEach(project => {
+            if (categorizedPosts[project]) {
+              categorizedPosts[project].push(postData);
+            }
+          });
+        }
+      }
+  
+      const dbPosts = await firestore.collection('posts')
+        .where('userId', '==', userId)
+        .where('createdAt', '>=', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
+        .where('tweetType', 'in', ['main', 'quote', 'replied_to'])
+        .get();
+      dbPosts.forEach(doc => {
+        const post = doc.data();
+        const postData = {
+          SOL_ID: post.SOL_ID || userId,
+          DEV_ID: post.DEV_ID || '',
+          userId: post.userId,
+          username: post.username,
+          postId: post.postId,
+          content: post.content,
+          project: post.project,
+          score: post.score,
+          blabz: post.blabz,
+          likes: post.likes,
+          retweets: post.retweets,
+          replies: post.replies,
+          hashtags: post.hashtags || [],
+          tweetUrl: post.tweetUrl,
+          createdAt: post.createdAt.toDate(),
+          tweetType: post.tweetType,
+          updatedAt: post.updatedAt.toDate()
+        };
+        post.project.forEach(project => {
+          if (categorizedPosts[project]) {
+            categorizedPosts[project].push(postData);
+          }
+        });
+      });
+  
+      for (const project in categorizedPosts) {
+        const seenPostIds = new Set();
+        categorizedPosts[project] = categorizedPosts[project].filter(post => {
+          if (seenPostIds.has(post.postId)) return false;
+          seenPostIds.add(post.postId);
+          return true;
+        });
+        categorizedPosts[project].sort((a, b) => b.score - a.score);
+      }
+  
+      const totalPosts = Object.values(categorizedPosts).reduce((sum, posts) => sum + posts.length, 0);
+      res.json({
+        message: totalPosts ? 'Posts retrieved' : 'No relevant posts found',
+        posts: categorizedPosts
+      });
+    } catch (err) {
+      console.error('[API] GET /posts error:', err.response?.status, err.message, err.stack);
+      res.status(err.response?.status || 500).json({ error: 'Server error', details: err.message });
+    }
+  });
+  
+  router.get('/project-details/:project', async (req, res) => {
+    try {
+      const { project } = req.params;
+      console.log(`[API] Fetching project details for twitterUsername: ${project}`);
+  
+      let dbProject = await firestore.collection('projects').where('twitterUsername', '==', project).get();
+      let projectData;
+      if (dbProject.empty) {
+        console.log(`[API] Project with twitterUsername ${project} not found, creating new project`);
+        projectData = {
+          name: project.toUpperCase(),
+          displayName: '',
+          keywords: [],
+          description: '',
+          website: '',
+          twitterUsername: project,
+          userId: '',
+          profile_image_url: '',
+          followers_count: 0,
+          following_count: 0,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+        await firestore.collection('projects').doc(project).set(projectData, { merge: true });
+        console.log(`[Firestore] Project with twitterUsername ${project} created:`, projectData);
+      } else {
+        projectData = dbProject.docs[0].data();
+      }
+  
+      if (!projectData.twitterUsername) {
+        return res.status(400).json({ error: 'No Twitter username associated with this project' });
+      }
+  
+      if (projectData.userId && projectData.updatedAt > new Date(Date.now() - 15 * 60 * 1000)) {
+        console.log(`[API] Using fresh cached project data for ${projectData.twitterUsername}`);
+        return res.json({
+          _id: dbProject.empty ? project : dbProject.docs[0].id,
+          name: projectData.name,
+          displayName: projectData.displayName,
+          createdAt: projectData.createdAt ? projectData.createdAt.toDate() : null,
+          description: projectData.description || '',
+          keywords: projectData.keywords || [],
+          website: projectData.website || '',
+          twitterUsername: projectData.twitterUsername,
+          userId: projectData.userId,
+          profile_image_url: projectData.profile_image_url,
+          followers_count: projectData.followers_count,
+          following_count: projectData.following_count,
+          updatedAt: projectData.updatedAt ? projectData.updatedAt.toDate() : null
         });
       }
-      throw err;
+  
+      let twitterUser;
+      try {
+        twitterUser = await fetchTwitterUser(projectData.twitterUsername);
+        if (!twitterUser) {
+          return res.status(404).json({ error: 'Twitter user not found for project' });
+        }
+      } catch (err) {
+        if (err.response?.status === 429) {
+          rateLimitUntil = new Date(Date.now() + 15 * 60 * 1000);
+          console.log(`[API] Rate limit hit, pausing until ${rateLimitUntil}`);
+          if (projectData.userId) {
+            console.log('[API] Using cached project data');
+            return res.json({
+              _id: dbProject.empty ? project : dbProject.docs[0].id,
+              name: projectData.name,
+              displayName: projectData.displayName,
+              createdAt: projectData.createdAt ? projectData.createdAt.toDate() : null,
+              description: projectData.description || '',
+              keywords: projectData.keywords || [],
+              website: projectData.website || '',
+              twitterUsername: projectData.twitterUsername,
+              userId: projectData.userId,
+              profile_image_url: projectData.profile_image_url,
+              followers_count: projectData.followers_count,
+              following_count: projectData.following_count,
+              updatedAt: projectData.updatedAt ? projectData.updatedAt.toDate() : null,
+              warning: 'Using cached data due to Twitter API rate limit'
+            });
+          }
+          return res.status(503).json({ 
+            error: 'Service temporarily unavailable', 
+            details: 'Twitter API rate limit exceeded, no cached data available' 
+          });
+        }
+        throw err;
+      }
+  
+      projectData = {
+        name: projectData.name || project.toUpperCase(),
+        displayName: twitterUser.name || '',
+        keywords: projectData.keywords || [],
+        description: projectData.description || '',
+        website: projectData.website || '',
+        twitterUsername: twitterUser.username,
+        userId: twitterUser.id,
+        profile_image_url: twitterUser.profile_image_url || '',
+        followers_count: twitterUser.public_metrics?.followers_count || 0,
+        following_count: twitterUser.public_metrics?.following_count || 0,
+        updatedAt: new Date(),
+        createdAt: projectData.createdAt || new Date()
+      };
+      await firestore.collection('projects').doc(project).set(projectData, { merge: true });
+      console.log(`[Firestore] Project with twitterUsername ${project} updated with Twitter details`);
+  
+      res.json({
+        _id: project,
+        name: projectData.name,
+        displayName: projectData.displayName,
+        createdAt: projectData.createdAt,
+        description: projectData.description,
+        keywords: projectData.keywords,
+        website: projectData.website,
+        twitterUsername: projectData.twitterUsername,
+        userId: twitterUser.id,
+        profile_image_url: twitterUser.profile_image_url,
+        followers_count: twitterUser.public_metrics.followers_count,
+        following_count: twitterUser.public_metrics.following_count,
+        updatedAt: projectData.updatedAt
+      });
+    } catch (err) {
+      console.error('[API] GET /project-details error:', err.response?.status, err.message, err.stack);
+      res.status(err.response?.status || 500).json({ error: 'Server error', details: err.message });
     }
-
-    const projectData = {
-      name: dbProject.name || project.toUpperCase(),
-      keywords: dbProject.keywords || [],
-      description: dbProject.description || '',
-      website: dbProject.website || '',
-      twitterUsername: twitterUser.username,
-      userId: twitterUser.id,
-      profile_image_url: twitterUser.profile_image_url || '',
-      followers_count: twitterUser.public_metrics?.followers_count || 0,
-      following_count: twitterUser.public_metrics?.following_count || 0,
-      updatedAt: new Date()
-    };
-    const updatedProject = await Project.findOneAndUpdate(
-      { twitterUsername: project },
-      { $set: projectData },
-      { new: true }
-    );
-    console.log(`[MongoDB] Project with twitterUsername ${project} updated with Twitter details`);
-
-    res.json({
-      _id: updatedProject._id,
-      name: updatedProject.name,
-      createdAt: updatedProject.createdAt,
-      description: updatedProject.description,
-      keywords: updatedProject.keywords,
-      website: updatedProject.website,
-      twitterUsername: updatedProject.twitterUsername,
-      userId: twitterUser.id,
-      profile_image_url: twitterUser.profile_image_url,
-      followers_count: twitterUser.public_metrics.followers_count,
-      following_count: twitterUser.public_metrics.following_count,
-      updatedAt: updatedProject.updatedAt
-    });
-  } catch (err) {
-    console.error('[API] GET /project-details error:', err.response?.status, err.message, err.stack);
-    res.status(err.response?.status || 500).json({ error: 'Server error', details: err.message });
-  }
-});
-
-router.delete('/processed-posts', async (req, res) => {
-  try {
-    console.log('[API] Clearing all processed posts');
-    const result = await ProcessedPost.deleteMany({});
-    console.log(`[MongoDB] Deleted ${result.deletedCount} processed posts`);
-    res.json({
-      message: `Successfully deleted ${result.deletedCount} processed posts`,
-      deletedCount: result.deletedCount
-    });
-  } catch (err) {
-    console.error('[API] DELETE /processed-posts error:', err.message, err.stack);
-    res.status(500).json({ error: 'Server error', details: err.message });
-  }
-});
-
-module.exports = router;
+  });
+  
+  router.delete('/processed-posts', async (req, res) => {
+    try {
+      console.log('[API] Clearing all processed posts');
+      const processedPosts = await firestore.collection('processedPosts').get();
+      const batch = firestore.batch();
+      processedPosts.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+      await batch.commit();
+      console.log(`[Firestore] Deleted ${processedPosts.size} processed posts`);
+      res.json({
+        message: `Successfully deleted ${processedPosts.size} processed posts`,
+        deletedCount: processedPosts.size
+      });
+    } catch (err) {
+      console.error('[API] DELETE /processed-posts error:', err.message, err.stack);
+      res.status(500).json({ error: 'Server error', details: err.message });
+    }
+  });
+  
+  module.exports = router;
