@@ -307,7 +307,7 @@ router.get('/rate-limit-status', async (req, res) => {
 
 router.post('/projects', async (req, res) => {
   try {
-    const { name, keywords, description, twitterUsername, userId, profile_image_url, name: projectName, followers_count, following_count } = req.body;
+    const { name, keywords, description, twitterUsername, userId, profile_image_url, followers_count, following_count } = req.body;
     if (!name) {
       return res.status(400).json({ error: 'Name required' });
     }
@@ -318,7 +318,6 @@ router.post('/projects', async (req, res) => {
       twitterUsername: twitterUsername || '',
       userId: userId || '',
       profile_image_url: profile_image_url || '',
-      name: projectName || '',
       followers_count: followers_count || 0,
       following_count: following_count || 0,
       updatedAt: new Date()
@@ -338,7 +337,7 @@ router.post('/projects', async (req, res) => {
 
 router.put('/project/:project', async (req, res) => {
   try {
-    const { keywords, description, twitterUsername, userId, profile_image_url, name: projectName, followers_count, following_count } = req.body;
+    const { keywords, description, twitterUsername, userId, profile_image_url, followers_count, following_count } = req.body;
     const projectData = {
       name: req.params.project.toUpperCase(),
       keywords: keywords || [],
@@ -346,7 +345,6 @@ router.put('/project/:project', async (req, res) => {
       twitterUsername: twitterUsername || '',
       userId: userId || '',
       profile_image_url: profile_image_url || '',
-      name: projectName || '',
       followers_count: followers_count || 0,
       following_count: following_count || 0,
       updatedAt: new Date()
@@ -966,6 +964,21 @@ router.get('/project-details/:project', async (req, res) => {
   } catch (err) {
     console.error('[API] GET /project-details error:', err.response?.status, err.message, err.stack);
     res.status(err.response?.status || 500).json({ error: 'Server error', details: err.message });
+  }
+});
+
+router.delete('/processed-posts', async (req, res) => {
+  try {
+    console.log('[API] Clearing all processed posts');
+    const result = await ProcessedPost.deleteMany({});
+    console.log(`[MongoDB] Deleted ${result.deletedCount} processed posts`);
+    res.json({
+      message: `Successfully deleted ${result.deletedCount} processed posts`,
+      deletedCount: result.deletedCount
+    });
+  } catch (err) {
+    console.error('[API] DELETE /processed-posts error:', err.message, err.stack);
+    res.status(500).json({ error: 'Server error', details: err.message });
   }
 });
 
