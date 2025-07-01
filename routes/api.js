@@ -26,6 +26,10 @@ function isValidDevId(devId) {
   return /^[a-zA-Z0-9_-]{8,64}$/.test(devId);
 }
 
+function isValidDate(dateString) {
+  return !isNaN(new Date(dateString).getTime());
+}
+
 function extractHashtags(text) {
   const hashtags = [];
   const regex = /#(\w+)/g;
@@ -366,7 +370,7 @@ router.put('/project/:project', async (req, res) => {
 router.post('/projects/:twitterUsername', async (req, res) => {
   try {
     const { twitterUsername } = req.params;
-    const { name, keywords, description, website } = req.body;
+    const { name, keywords, description, website, createdAt } = req.body;
 
     if (!name || !twitterUsername) {
       return res.status(400).json({ error: 'name and twitterUsername required' });
@@ -378,6 +382,10 @@ router.post('/projects/:twitterUsername', async (req, res) => {
 
     if (website && !/^https?:\/\/[^\s$.?#].[^\s]*$/.test(website)) {
       return res.status(400).json({ error: 'Invalid website URL' });
+    }
+
+    if (createdAt && !isValidDate(createdAt)) {
+      return res.status(400).json({ error: 'Invalid createdAt date' });
     }
 
     console.log(`[API] Fetching Twitter user for project: ${twitterUsername}`);
@@ -429,12 +437,13 @@ router.post('/projects/:twitterUsername', async (req, res) => {
       profile_image_url: twitterUser.profile_image_url || '',
       followers_count: twitterUser.public_metrics?.followers_count || 0,
       following_count: twitterUser.public_metrics?.following_count || 0,
-      updatedAt: new Date()
+      updatedAt: new Date(),
+      createdAt: createdAt ? new Date(createdAt) : new Date()
     };
 
     const project = await Project.findOneAndUpdate(
       { twitterUsername },
-      { $set: projectData, $setOnInsert: { createdAt: new Date() } },
+      { $set: projectData, $setOnInsert: { createdAt: createdAt ? new Date(createdAt) : new Date() } },
       { upsert: true, new: true }
     );
     console.log(`[MongoDB] Project ${name} saved/updated:`, project);
@@ -520,7 +529,7 @@ router.get('/posts/:username', async (req, res) => {
           const cachedPosts = await Post.find({
             userId: userDoc.userId,
             createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
-            tweetType: { $in: ['main', 'quote', 'replied_to'] } // Include replies
+            tweetType: { $in: ['main', 'quote', 'replied_to'] }
           }).lean();
           const dbProjects = await Project.find().lean();
           if (!dbProjects.length) {
@@ -630,7 +639,7 @@ router.get('/posts/:username', async (req, res) => {
         const cachedPosts = await Post.find({
           userId: userDoc.userId,
           createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
-          tweetType: { $in: ['main', 'quote', 'replied_to'] } // Include replies
+          tweetType: { $in: ['main', 'quote', 'replied_to'] }
         }).lean();
         const categorizedPosts = {};
         dbProjects.forEach(project => {
@@ -687,7 +696,6 @@ router.get('/posts/:username', async (req, res) => {
 
     if (tweets.length) {
       for (const tweet of tweets) {
-        // Process all tweets, including replies, but skip invalid types
         if (tweet.referenced_tweets?.[0]?.type && !['quoted', 'replied_to'].includes(tweet.referenced_tweets[0].type)) {
           console.log(`[API] Skipping non-post/quote/reply tweet ${tweet.id}`);
           await ProcessedPost.findOneAndUpdate(
@@ -787,7 +795,7 @@ router.get('/posts/:username', async (req, res) => {
     const dbPosts = await Post.find({
       userId,
       createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
-      tweetType: { $in: ['main', 'quote', 'replied_to'] } // Include replies
+      tweetType: { $in: ['main', 'quote', 'replied_to'] }
     }).lean();
     dbPosts.forEach(post => {
       const postData = {
@@ -851,7 +859,6 @@ router.get('/project-details/:project', async (req, res) => {
         twitterUsername: project,
         userId: '',
         profile_image_url: '',
-        name: '',
         followers_count: 0,
         following_count: 0,
         updatedAt: new Date(),
