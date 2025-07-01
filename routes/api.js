@@ -249,9 +249,7 @@ router.get('/user-details/:username', async (req, res) => {
 
 router.get('/rate-limit-status', async (req, res) => {
   try {
-    console.log('[因子
-
-System: '[API] Checking Twitter API rate limit status');
+    console.log('[API] Checking Twitter API rate limit status');
     if (rateLimitUntil && rateLimitUntil > new Date()) {
       return res.json({ 
         message: 'Rate limit active', 
@@ -406,7 +404,9 @@ router.post('/projects/:twitterUsername', async (req, res) => {
       });
     }
 
-    console.log(`[API] Fetching Twitter user for project: ${twitterUsername}`);
+    console.log(`[API] Input for twitterUsername: ${twitterUsername}`, { name, keywords, description, website, createdAt });
+
+    // Fetch Twitter user data
     let twitterUser;
     try {
       twitterUser = await fetchTwitterUser(twitterUsername);
@@ -417,7 +417,7 @@ router.post('/projects/:twitterUsername', async (req, res) => {
       if (err.response?.status === 429) {
         const cachedProject = await Project.findOne({ twitterUsername }).lean();
         if (cachedProject) {
-          console.log('[API] Using cached project data');
+          console.log('[API] Using cached project data due to rate limit');
           return res.json({
             message: `Project ${name} retrieved from cache`,
             project: {
@@ -446,26 +446,40 @@ router.post('/projects/:twitterUsername', async (req, res) => {
       throw err;
     }
 
-    // Fetch existing project to preserve fields not sent in the request
+    // Fetch existing project
     const existingProject = await Project.findOne({ twitterUsername }).lean();
     console.log(`[API] Existing project for ${twitterUsername}:`, existingProject);
 
+    // Build update object with only provided fields
     const projectData = {
       name: name.toUpperCase(),
       displayName: twitterUser.name || (existingProject ? existingProject.displayName : ''),
-      keywords: keywords !== undefined ? keywords : (existingProject ? existingProject.keywords : []),
-      description: description !== undefined ? description : (existingProject ? existingProject.description : ''),
-      website: website !== undefined ? website : (existingProject ? existingProject.website : ''),
       twitterUsername: twitterUser.username,
       userId: twitterUser.id,
       profile_image_url: twitterUser.profile_image_url || (existingProject ? existingProject.profile_image_url : ''),
       followers_count: twitterUser.public_metrics?.followers_count || (existingProject ? existingProject.followers_count : 0),
       following_count: twitterUser.public_metrics?.following_count || (existingProject ? existingProject.following_count : 0),
-      createdAt: createdAt ? new Date(createdAt) : (existingProject ? existingProject.createdAt : new Date()),
       updatedAt: new Date()
     };
 
-    console.log(`[API] Updating project for twitterUsername: ${twitterUsername} with data:`, projectData);
+    // Only update fields that were provided in the request
+    if (keywords !== undefined) projectData.keywords = keywords;
+    else if (existingProject) projectData.keywords = existingProject.keywords;
+    else projectData.keywords = [];
+
+    if (description !== undefined) projectData.description = description;
+    else if (existingProject) projectData.description = existingProject.description;
+    else projectData.description = '';
+
+    if (website !== undefined) projectData.website = website;
+    else if (existingProject) projectData.website = existingProject.website;
+    else projectData.website = '';
+
+    if (createdAt !== undefined) projectData.createdAt = new Date(createdAt);
+    else if (existingProject) projectData.createdAt = existingProject.createdAt;
+    else projectData.createdAt = new Date();
+
+    console.log(`[API] Updating project for ${twitterUsername} with data:`, projectData);
 
     const project = await Project.findOneAndUpdate(
       { twitterUsername },
