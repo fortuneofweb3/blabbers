@@ -363,6 +363,105 @@ router.put('/project/:project', async (req, res) => {
   }
 });
 
+router.post('/projects/:twitterUsername', async (req, res) => {
+  try {
+    const { twitterUsername } = req.params;
+    const { name, keywords, description, website } = req.body;
+
+    if (!name || !twitterUsername) {
+      return res.status(400).json({ error: 'name and twitterUsername required' });
+    }
+
+    if (!Array.isArray(keywords) || keywords.some(k => typeof k !== 'string')) {
+      return res.status(400).json({ error: 'keywords must be an array of strings' });
+    }
+
+    if (website && !/^https?:\/\/[^\s$.?#].[^\s]*$/.test(website)) {
+      return res.status(400).json({ error: 'Invalid website URL' });
+    }
+
+    console.log(`[API] Fetching Twitter user for project: ${twitterUsername}`);
+    let twitterUser;
+    try {
+      twitterUser = await fetchTwitterUser(twitterUsername);
+      if (!twitterUser) {
+        return res.status(404).json({ error: 'Twitter user not found' });
+      }
+    } catch (err) {
+      if (err.response?.status === 429) {
+        const cachedProject = await Project.findOne({ twitterUsername }).lean();
+        if (cachedProject) {
+          console.log('[API] Using cached project data');
+          return res.json({
+            message: `Project ${name} retrieved from cache`,
+            project: {
+              _id: cachedProject._id,
+              name: cachedProject.name,
+              createdAt: cachedProject.createdAt,
+              description: cachedProject.description || '',
+              keywords: cachedProject.keywords || [],
+              website: cachedProject.website || '',
+              twitterUsername: cachedProject.twitterUsername,
+              userId: cachedProject.userId,
+              profile_image_url: cachedProject.profile_image_url,
+              followers_count: cachedProject.followers_count,
+              following_count: cachedProject.following_count,
+              updatedAt: cachedProject.updatedAt
+            },
+            warning: 'Using cached data due to Twitter API rate limit'
+          });
+        }
+        return res.status(503).json({ 
+          error: 'Service temporarily unavailable', 
+          details: 'Twitter API rate limit exceeded, no cached data available' 
+        });
+      }
+      throw err;
+    }
+
+    const projectData = {
+      name: name.toUpperCase(),
+      keywords: keywords || [],
+      description: description || '',
+      website: website || '',
+      twitterUsername: twitterUser.username,
+      userId: twitterUser.id,
+      profile_image_url: twitterUser.profile_image_url || '',
+      followers_count: twitterUser.public_metrics?.followers_count || 0,
+      following_count: twitterUser.public_metrics?.following_count || 0,
+      updatedAt: new Date()
+    };
+
+    const project = await Project.findOneAndUpdate(
+      { twitterUsername },
+      { $set: projectData, $setOnInsert: { createdAt: new Date() } },
+      { upsert: true, new: true }
+    );
+    console.log(`[MongoDB] Project ${name} saved/updated:`, project);
+
+    res.json({
+      message: `Project ${name} saved/updated`,
+      project: {
+        _id: project._id,
+        name: project.name,
+        createdAt: project.createdAt,
+        description: project.description,
+        keywords: project.keywords,
+        website: project.website,
+        twitterUsername: project.twitterUsername,
+        userId: project.userId,
+        profile_image_url: project.profile_image_url,
+        followers_count: project.followers_count,
+        following_count: project.following_count,
+        updatedAt: project.updatedAt
+      }
+    });
+  } catch (err) {
+    console.error('[API] POST /projects/:twitterUsername error:', err.response?.status, err.message, err.stack);
+    res.status(err.response?.status || 500).json({ error: 'Server error', details: err.message });
+  }
+});
+
 router.get('/posts/:username', async (req, res) => {
   try {
     const { username } = req.params;
@@ -421,7 +520,7 @@ router.get('/posts/:username', async (req, res) => {
           const cachedPosts = await Post.find({
             userId: userDoc.userId,
             createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
-            tweetType: { $in: ['main', 'quote'] }
+            tweetType: { $in: ['main', 'quote', 'replied_to'] } // Include replies
           }).lean();
           const dbProjects = await Project.find().lean();
           if (!dbProjects.length) {
@@ -531,7 +630,7 @@ router.get('/posts/:username', async (req, res) => {
         const cachedPosts = await Post.find({
           userId: userDoc.userId,
           createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
-          tweetType: { $in: ['main', 'quote'] }
+          tweetType: { $in: ['main', 'quote', 'replied_to'] } // Include replies
         }).lean();
         const categorizedPosts = {};
         dbProjects.forEach(project => {
@@ -588,18 +687,9 @@ router.get('/posts/:username', async (req, res) => {
 
     if (tweets.length) {
       for (const tweet of tweets) {
-        if (tweet.referenced_tweets?.[0]?.type === 'replied_to') {
-          console.log(`[API] Skipping reply tweet ${tweet.id}`);
-          await ProcessedPost.findOneAndUpdate(
-            { postId: tweet.id },
-            { postId: tweet.id, updatedAt: new Date() },
-            { upsert: true }
-          );
-          continue;
-        }
-
-        if (tweet.referenced_tweets?.[0]?.type && tweet.referenced_tweets[0].type !== 'quoted') {
-          console.log(`[API] Skipping non-post/quote tweet ${tweet.id}`);
+        // Process all tweets, including replies, but skip invalid types
+        if (tweet.referenced_tweets?.[0]?.type && !['quoted', 'replied_to'].includes(tweet.referenced_tweets[0].type)) {
+          console.log(`[API] Skipping non-post/quote/reply tweet ${tweet.id}`);
           await ProcessedPost.findOneAndUpdate(
             { postId: tweet.id },
             { postId: tweet.id, updatedAt: new Date() },
@@ -671,7 +761,7 @@ router.get('/posts/:username', async (req, res) => {
           hashtags: extractHashtags(tweet.text),
           tweetUrl: `https://x.com/${username}/status/${tweet.id}`,
           createdAt: new Date(tweet.created_at),
-          tweetType: tweet.referenced_tweets?.[0]?.type === 'quoted' ? 'quote' : 'main'
+          tweetType: tweet.referenced_tweets?.[0]?.type || 'main'
         };
 
         const post = await Post.findOneAndUpdate(
@@ -697,7 +787,7 @@ router.get('/posts/:username', async (req, res) => {
     const dbPosts = await Post.find({
       userId,
       createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
-      tweetType: { $in: ['main', 'quote'] }
+      tweetType: { $in: ['main', 'quote', 'replied_to'] } // Include replies
     }).lean();
     dbPosts.forEach(post => {
       const postData = {
@@ -764,7 +854,8 @@ router.get('/project-details/:project', async (req, res) => {
         name: '',
         followers_count: 0,
         following_count: 0,
-        updatedAt: new Date()
+        updatedAt: new Date(),
+        createdAt: new Date()
       };
       dbProject = await Project.findOneAndUpdate(
         { twitterUsername: project },
@@ -781,12 +872,18 @@ router.get('/project-details/:project', async (req, res) => {
     if (dbProject.userId && dbProject.updatedAt > new Date(Date.now() - 15 * 60 * 1000)) {
       console.log(`[API] Using fresh cached project data for ${dbProject.twitterUsername}`);
       return res.json({
-        userId: dbProject.userId,
-        username: dbProject.twitterUsername,
+        _id: dbProject._id,
         name: dbProject.name,
+        createdAt: dbProject.createdAt,
+        description: dbProject.description || '',
+        keywords: dbProject.keywords || [],
+        website: dbProject.website || '',
+        twitterUsername: dbProject.twitterUsername,
+        userId: dbProject.userId,
         profile_image_url: dbProject.profile_image_url,
         followers_count: dbProject.followers_count,
-        following_count: dbProject.following_count
+        following_count: dbProject.following_count,
+        updatedAt: dbProject.updatedAt
       });
     }
 
@@ -803,12 +900,18 @@ router.get('/project-details/:project', async (req, res) => {
         if (dbProject.userId) {
           console.log('[API] Using cached project data');
           return res.json({
-            userId: dbProject.userId,
-            username: dbProject.twitterUsername,
+            _id: dbProject._id,
             name: dbProject.name,
+            createdAt: dbProject.createdAt,
+            description: dbProject.description || '',
+            keywords: dbProject.keywords || [],
+            website: dbProject.website || '',
+            twitterUsername: dbProject.twitterUsername,
+            userId: dbProject.userId,
             profile_image_url: dbProject.profile_image_url,
             followers_count: dbProject.followers_count,
             following_count: dbProject.following_count,
+            updatedAt: dbProject.updatedAt,
             warning: 'Using cached data due to Twitter API rate limit'
           });
         }
@@ -824,10 +927,10 @@ router.get('/project-details/:project', async (req, res) => {
       name: dbProject.name || project.toUpperCase(),
       keywords: dbProject.keywords || [],
       description: dbProject.description || '',
+      website: dbProject.website || '',
       twitterUsername: twitterUser.username,
       userId: twitterUser.id,
       profile_image_url: twitterUser.profile_image_url || '',
-      name: twitterUser.name || '',
       followers_count: twitterUser.public_metrics?.followers_count || 0,
       following_count: twitterUser.public_metrics?.following_count || 0,
       updatedAt: new Date()
@@ -840,12 +943,18 @@ router.get('/project-details/:project', async (req, res) => {
     console.log(`[MongoDB] Project with twitterUsername ${project} updated with Twitter details`);
 
     res.json({
+      _id: updatedProject._id,
+      name: updatedProject.name,
+      createdAt: updatedProject.createdAt,
+      description: updatedProject.description,
+      keywords: updatedProject.keywords,
+      website: updatedProject.website,
+      twitterUsername: updatedProject.twitterUsername,
       userId: twitterUser.id,
-      username: twitterUser.username,
-      name: twitterUser.name,
       profile_image_url: twitterUser.profile_image_url,
       followers_count: twitterUser.public_metrics.followers_count,
-      following_count: twitterUser.public_metrics.following_count
+      following_count: twitterUser.public_metrics.following_count,
+      updatedAt: updatedProject.updatedAt
     });
   } catch (err) {
     console.error('[API] GET /project-details error:', err.response?.status, err.message, err.stack);
