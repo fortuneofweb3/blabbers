@@ -17,7 +17,7 @@ const postSchema = new Schema({
   hashtags: { type: [String], default: [] },
   tweetUrl: { type: String, required: true },
   createdAt: { type: Date, required: true },
-  tweetType: { type: String, required: true },
+  tweetType: { type: String, required: true, enum: ['main', 'quote', 'replied_to'] },
   updatedAt: { type: Date, default: Date.now }
 });
 
